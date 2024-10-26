@@ -2,9 +2,14 @@
 
 namespace App\Http\Controllers;
 
+
+
+use App\common\ApiResponse;
+use App\Http\Resources\PostResource;
 use App\Models\Post;
 use App\Models\Tag;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
 
@@ -13,7 +18,7 @@ class PostController extends Controller
     public function index()
     {
         $posts = Auth::user()->posts()->with('tags')->orderByDesc('pinned')->get();
-        return response()->json($posts);
+        return PostResource::collection($posts);
     }
 
     public function store(Request $request)
@@ -32,25 +37,28 @@ class PostController extends Controller
 
         $data = $request->only(['title', 'body', 'pinned']);
         $data['user_id'] = Auth::id();
-        $data['cover_image'] = $request->file('cover_image')->store('cover_images');
+        if ($request->hasFile('cover_image')) {
+            $file = $request->file('cover_image');
+            $filename = time() . '.' . $file->getClientOriginalExtension();
+            $path = public_path('uploads/cover_images');
+            $file->move($path, $filename);
+            $data['cover_image'] = $filename;
+        }
+
 
         $post = Post::create($data);
         $post->tags()->attach($request->tags);
 
 
+        return ApiResponse::sendResponse(Response::HTTP_OK, 'Post created successfully', new PostResource($post));
 
 
-
-        return response()->json([
-            'message' => 'Post created successfully',
-            'post' => $post
-        ], 201);
     }
 
     public function show($id)
     {
         $post = Auth::user()->posts()->with('tags')->findOrFail($id);
-        return response()->json($post);
+      return ApiResponse::sendResponse(Response::HTTP_OK, 'Post retrieved successfully', new PostResource($post));
     }
 
     public function update(Request $request, $id)
@@ -69,17 +77,41 @@ class PostController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $data = $request->only(['title', 'body', 'pinned']);
-        if ($request->hasFile('cover_image')) {
-            $data['cover_image'] = $request->file('cover_image')->store('cover_images');
+
+        if ($request->has('title')) {
+            $post->title = $request->input('title');
+        }
+        if ($request->has('body')) {
+            $post->body = $request->input('body');
         }
 
-        $post->update($data);
+
         if ($request->has('tags')) {
             $post->tags()->sync($request->tags);
         }
 
-        return response()->json($post);
+
+        if ($request->hasFile('cover_image')) {
+
+            if ($post->cover_image) {
+                $oldPhotoPath = public_path('uploads/cover_images/' . $post->cover_image);
+                if (file_exists($oldPhotoPath)) {
+                    unlink($oldPhotoPath);
+                }
+            }
+
+
+            $file = $request->file('cover_image');
+            $photoName = time() . '_' . $file->getClientOriginalName();
+            $file->move(public_path('uploads/cover_images'), $photoName);
+            $post->cover_image = $photoName;
+        }
+
+        $post->save();
+
+        return ApiResponse::sendResponse(Response::HTTP_OK, 'Post Information', new PostResource($post));
+
+
     }
 
     public function destroy($id)
@@ -87,7 +119,8 @@ class PostController extends Controller
         $post = Auth::user()->posts()->findOrFail($id);
         $post->delete();
 
-        return response()->json(['message' => 'Post softly deleted.']);
+        return ApiResponse::sendResponse(Response::HTTP_OK, 'Post deleted successfully');
+
     }
 
         public function viewDeleted()
@@ -99,7 +132,7 @@ class PostController extends Controller
                 return response()->json(['message' => 'No deleted posts found.'], 404);
             }
 
-            return response()->json($deletedPosts);
+            return ApiResponse::sendResponse(Response::HTTP_OK, 'Deleted posts', $deletedPosts);
         }
 
     public function restore($id)
@@ -107,6 +140,7 @@ class PostController extends Controller
         $post = Auth::user()->posts()->onlyTrashed()->findOrFail($id);
         $post->restore();
 
-        return response()->json(['message' => 'Post restored successfully.']);
+
+       return ApiResponse::sendResponse(Response::HTTP_OK, 'Post restored successfully');
     }
 }
